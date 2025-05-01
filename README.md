@@ -1,2 +1,2 @@
 # Analisis_Multivariado_UP
-Análisis Discriminante Lineal y Cuadrático
+Ejemplos de técnicas de análisis multivariado trabajados durante mi carrera universitaria.
