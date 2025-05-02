@@ -1,0 +1,266 @@
+---
+title: "Análisis Discriminante Lineal y Cuadrático"
+author: "Katherine Flores"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_float: true
+    theme: sandstone 
+    highlight: tango
+    df_print: paged
+knitr:
+  opts_chunk:
+    warning: false
+    message: false
+    echo: true
+---
+
+## Cargar y evaluar los datos
+
+#### Librerías y base de datos
+
+```{r}
+# Cargar las librerías necesarias
+library(car)
+library(caret)  
+library(GGally)
+library(ggplot2)
+library(klaR)
+library(MASS) 
+library(mclust)
+library(MVN)
+library(patchwork)
+library(readxl)
+library(tidyverse)
+library(tidyr)
+
+# Cargar los datos 
+data(iris)
+```
+
+#### Resumen descriptivo general de las variables
+
+```{r}
+summary(iris[, 1:4])
+```
+
+> Se observa que Petal.Length y Petal.Width tienen mayor variabilidad y amplitud de rango, lo que sugiere que son las variables más útiles para discriminar entre especies. En cambio, Sepal.Width presenta menor variación, lo que podría limitar su capacidad discriminante.
+
+#### Gráfica de pastel
+
+```{r}
+grafica_pastel <- iris %>%
+  group_by(Species) %>%
+  summarise(n = n()) %>%
+  mutate(
+    Tipo = as.character(Species),
+    Porcentaje = round((n / sum(n)) * 100, 1),
+    Etiqueta = paste0(Tipo, "\n", Porcentaje, "%")
+  )
+
+ggplot(grafica_pastel, aes(x = "", y = n, fill = Tipo)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = Etiqueta), position = position_stack(vjust = 0.5), color = "white", size = 4.5) +
+  scale_fill_manual(values = c(
+    "setosa" = "#66c2a5",
+    "versicolor" = "#fc8d62",
+    "virginica" = "#8da0cb"
+  )) +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+  ) +
+  ggtitle("Distribución de especies")
+```
+
+> El gráfico de pastel muestra que las tres especies del conjunto de datos iris setosa, versicolor y virginica están perfectamente balanceadas, representando cada una el 33.3% de las observaciones. Este equilibrio es ideal, ya que evita el sesgo hacia una clase dominante y permite que el modelo aprenda funciones discriminantes sin que una categoría tenga mayor influencia solo por su tamaño. Este balance garantiza que las funciones discriminantes estén orientadas a maximizar la separación real entre clases, basándose en las características morfométricas y no en diferencias de frecuencia.
+
+#### Análisis de correlación
+
+```{r}
+# Análisis de correlación
+ggpairs(data = iris[, 1:4], 
+        upper = list(continuous = wrap("cor", size = 2.5, hjust = 0.5)), 
+        progress = FALSE)
+```
+
+> Se observan correlaciones positivas muy fuertes entre Petal.Length y Petal.Width (r = 0.963), y también entre Sepal.Length y Petal.Length (r = 0.872), lo que indica que estas variables están altamente relacionadas y, por tanto, podrían estar proporcionando información redundante. Sin embargo, su fuerte asociación sugiere que juntas podrían ser muy útiles para discriminar entre especies. Por otro lado, Sepal.Width presenta correlaciones más débiles e incluso negativas con las otras variables, lo que podría limitar su contribución al modelo discriminante.
+
+#### Estandarización
+
+```{r}
+# Estandarización
+iris_scaled <- iris %>%
+  mutate(across(-Species, scale))
+```
+
+#### Diagrama de cajas y bigotes
+
+```{r}
+# Transformar a formato largo
+iris_long <- iris %>%
+  pivot_longer(cols = -Species, names_to = "variable", values_to = "valor")
+
+# Boxplot
+ggplot(iris_long, aes(x = Species, y = valor, fill = Species)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free") +
+  scale_fill_manual(values = c("setosa" = "#66c2a5", "versicolor" = "#fc8d62", "virginica" = "#8da0cb")) +
+  theme_minimal() +
+  labs(title = "Boxplots de variables por especie", x = "Especie", y = "Valor")
+```
+
+> En particular, las variables de los pétalos (Petal.Length y Petal.Width) presentan una clara separación entre especies, con mínimas superposiciones, lo que indica un alto poder discriminante. Setosa se distingue claramente de versicolor y virginica en estas variables. Por otro lado, las variables del sépalo (Sepal.Length y Sepal.Width) muestran más solapamiento entre versicolor y virginica, lo que sugiere una menor capacidad para discriminar entre estas dos clases.
+
+#### Histograma de cada variable por grupo
+
+```{r}
+# Definir colores personalizados
+colores_personalizados <- c("setosa" = "#66c2a5", "versicolor" = "#fc8d62", "virginica" = "#8da0cb")
+
+# Crear los cuatro gráficos individualmente
+
+p1 <- ggplot(iris, aes(x = Sepal.Length, fill = Species)) +
+  geom_histogram(aes(y = ..density..), color = "black", bins = 15, alpha = 0.7) +
+  geom_density(alpha = 0.5, color = "black") +
+  facet_wrap(~Species, scales = "free") +
+  scale_fill_manual(values = colores_personalizados) +
+  labs(title = "Sepal Length", x = "Sepal Length", y = "Densidad") +
+  theme_minimal()
+
+p2 <- ggplot(iris, aes(x = Sepal.Width, fill = Species)) +
+  geom_histogram(aes(y = ..density..), color = "black", bins = 15, alpha = 0.7) +
+  geom_density(alpha = 0.5, color = "black") +
+  facet_wrap(~Species, scales = "free") +
+  scale_fill_manual(values = colores_personalizados) +
+  labs(title = "Sepal Width", x = "Sepal Width", y = "Densidad") +
+  theme_minimal()
+
+p3 <- ggplot(iris, aes(x = Petal.Length, fill = Species)) +
+  geom_histogram(aes(y = ..density..), color = "black", bins = 15, alpha = 0.7) +
+  geom_density(alpha = 0.5, color = "black") +
+  facet_wrap(~Species, scales = "free") +
+  scale_fill_manual(values = colores_personalizados) +
+  labs(title = "Petal Length", x = "Petal Length", y = "Densidad") +
+  theme_minimal()
+
+p4 <- ggplot(iris, aes(x = Petal.Width, fill = Species)) +
+  geom_histogram(aes(y = ..density..), color = "black", bins = 15, alpha = 0.7) +
+  geom_density(alpha = 0.5, color = "black") +
+  facet_wrap(~Species, scales = "free") +
+  scale_fill_manual(values = colores_personalizados) +
+  labs(title = "Petal Width", x = "Petal Width", y = "Densidad") +
+  theme_minimal()
+
+# Unir los cuatro gráficos en 2x2
+(p1 | p2) / (p3 | p4)
+```
+
+> Se observa que la variable petal length y petal width son altamente discriminantes, ya que las distribuciones para las tres especies están bien separadas, especialmente setosa, que se distingue claramente de las otras dos. En cambio, las variables de sépalo presentan una mayor superposición entre versicolor y virginica, lo que sugiere que son menos efectivas para la discriminación por sí solas.
+
+## Verificación de supuestos
+
+#### Las variables independientes tienen distribución normal en todos los grupos
+
+```{r}
+# Normalidad multivariada usando Henze-Zirkler
+mvn_result <- mvn(data = iris[,1:4], mvnTest = "hz")
+print(mvn_result$multivariateNormality)
+
+# Normalidad multivariada usando Mardia
+mvn_result_mardia <- mvn(data = iris[,1:4], mvnTest = "mardia")
+print(mvn_result_mardia$multivariateNormality)
+
+# Para Setosa
+mvn(data = iris[iris$Species == "setosa", 1:4], mvnTest = "hz")
+
+# Para Versicolor
+mvn(data = iris[iris$Species == "versicolor", 1:4], mvnTest = "hz")
+
+# Para Virginica
+mvn(data = iris[iris$Species == "virginica", 1:4], mvnTest = "hz")
+```
+
+> A nivel general (todas las especies juntas), tanto la prueba de Henze-Zirkler como la de Mardia (skewness y kurtosis) rechazan la hipótesis de normalidad multivariada, lo cual compromete uno de los supuestos clave de LDA: que los predictores dentro de cada clase siguen una distribución normal multivariada. Sin embargo, al evaluar por especie, se observa que versicolor y virginica sí cumplen con este supuesto según Henze-Zirkler, mientras que setosa no lo cumple por poco (p ≈ 0.05), y además presenta desviaciones en la normalidad univariada de las variables de pétalo.
+
+#### Las varianzas de las variables independientes son iguales en todos los grupos
+
+```{r}
+# Prueba de Levene para comprobar la igualdad de varianzas de entre las especies
+variables <- c("Sepal.Length", "Sepal.Width", "Petal.Length", "Petal.Width")
+for (var in variables) {
+  cat("\nPrueba de Levene para", var, ":\n")
+  print(leveneTest(as.formula(paste(var, "~ Species")), data = iris))
+}
+```
+
+> Específicamente, se observa que las variables Sepal.Length, Petal.Length y Petal.Width presentan diferencias estadísticamente significativas en la varianza entre especies (p \< 0.01), mientras que Sepal.Width no muestra evidencia de tal diferencia (p = 0.56). Esta heterogeneidad sugiere que las matrices de covarianza no son iguales entre grupos, lo que debilita otro supuesto clave de LDA. Aunque el modelo puede ser moderadamente robusto frente a estas violaciones, la presencia de varianzas significativamente distintas especialmente en las variables más discriminantes como las de pétalo podría sesgar la clasificación.
+
+#### Las covarianzas de las variables independientes son iguales en todos los grupos
+
+```{r}
+# Prueba Box's M para igualdad de matrices de covarianza
+library(biotools)
+boxM(iris[,1:4], iris$Species)
+```
+
+> El resultado del test de Box M indica una violación severa del supuesto de homogeneidad de matrices de covarianza entre las especies del conjunto datos. Con un valor de chi-cuadrado aproximado de 140.94, 20 grados de libertad y un valor-p extremadamente bajo (p \< 2.2e-16), se rechaza contundentemente la hipótesis nula de que las matrices de covarianza poblacionales son iguales. Este supuesto es fundamental en el Análisis Discriminante Lineal (LDA), ya que el modelo asume que todas las clases comparten una única matriz de covarianza para proyectar de forma óptima los datos. En ese sentido, se usará más adelante el Análisis Discriminante Cuadrático (QDA), que permite que cada clase tenga su propia matriz de covarianza.
+
+## Modelos LDA y QDA
+
+#### Análisis Discriminante Lineal
+
+```{r}
+# Se realiza la técnica de LDA
+modelo_lda <- lda(Species ~ ., data = iris_scaled)
+print(modelo_lda)
+```
+
+> Los coeficientes de las funciones discriminantes (LD1 y LD2) revelan que las variables más influyentes en la separación entre grupos son Petal.Length y Petal.Width, especialmente en LD1, que explica el 99.12% de la varianza discriminante, lo que sugiere que casi toda la separación entre clases puede visualizarse en una sola dimensión. LD2, que representa apenas el 0.88%, añade poca información adicional. Además, los coeficientes positivos y negativos indican la dirección de influencia de cada variable en la separación de clases.
+
+```{r}
+# Valores propios (lambda)
+eig_vals <- modelo_lda$svd^2
+wilks_lambda <- prod(1 / (1 + eig_vals))
+wilks_lambda
+```
+
+> El valor extremadamente bajo del lambda de Wilks (λ = 1.922×10⁻⁵) indica que casi toda la variabilidad total en las variables predictoras (Sepal.Length, Sepal.Width, Petal.Length y Petal.Width) está asociada a diferencias entre los grupos (setosa, versicolor y virginica), y no al error dentro de los grupos. Esto significa que las funciones discriminantes construidas son altamente efectivas para separar las especies, ya que un lambda cercano a 0 sugiere una fuerte evidencia contra la hipótesis nula de igualdad multivariada de medias.
+
+```{r}
+# Calcular correlaciones canónicas
+canonical_cor <- modelo_lda$svd / sqrt(1 + modelo_lda$svd^2)
+canonical_cor
+```
+
+> Las correlaciones canónicas obtenidas (0.9998 para LD1 y 0.9770 para LD2) indican que ambas funciones discriminantes están altamente correlacionadas con las variables originales, lo que sugiere que las combinaciones lineales construidas por el modelo LDA son sumamente eficaces para capturar la variación entre los grupos. En particular, la primera función (LD1) tiene una correlación prácticamente perfecta, lo que confirma su papel predominante en la separación entre especies.
+
+```{r}
+# Obtener predicciones del modelo LDA
+predicciones_lda <- predict(modelo_lda, iris_scaled)
+
+# Matriz de confusión
+confusionMatrix(data = predicciones_lda$class, reference = iris_scaled$Species)
+```
+
+> El modelo LDA tiene un desempeño sobresaliente en la clasificación de las especies, alcanzando una exactitud global del 98%. No se cometieron errores al clasificar a la especie setosa, mientras que se observan solo tres errores en total al diferenciar entre versicolor y virginica, que son morfológicamente más similares. Las métricas por clase reflejan esta precisión, con sensibilidades y especificidades cercanas o iguales a 1, y valores Kappa muy altos (0.97), lo que evidencia un acuerdo casi perfecto entre las predicciones del modelo y las clases reales.
+
+```{r}
+partimat(Species ~ .,iris_scaled, main="Discriminación",
+         method = "lda", image.colors = c("#66c2a5", "versicolor" = "#fc8d62", "virginica" = "#8da0cb"),
+         col.mean = "skyblue")
+```
+
+> Observamos que setosa está perfectamente separada en todos los planos, mientras que versicolor y virginica presentan cierta superposición en varias combinaciones, especialmente cuando se usan variables menos informativas como Sepal.Width. Los errores de clasificación son escasos, lo que refuerza la excelente capacidad del modelo para separar las clases, especialmente en planos donde intervienen las variables de pétalo (Petal.Length y Petal.Width).
+
+```{r}
+partimat(Species ~ .,iris_scaled, main="Discriminación",
+         method = "qda", image.colors = c("setosa" = "#66c2a5", "versicolor" = "#fc8d62", "virginica" = "#8da0cb"),
+         col.mean = "skyblue")
+```
+
+> A diferencia del LDA, QDA permite modelar fronteras no lineales al estimar una matriz de covarianza específica para cada clase, lo cual se refleja en las formas curvas de las regiones clasificadas. Las tasas de error aparente en los paneles muestran una mejora sustancial cuando se utilizan variables de los pétalos, con errores tan bajos como 2% al usar Petal.Length y Petal.Width, mientras que las combinaciones de sépalos alcanzan errores más altos, hasta 20%. Esto indica que las variables de los pétalos ofrecen una mejor separación no lineal entre especies y que QDA logra capturar esa complejidad con mayor flexibilidad que LDA.
